@@ -291,3 +291,49 @@ class ReaderScreen(MDScreen):
         
         if self.settings_dialog:
             self.settings_dialog.dismiss()
+
+# Adicione AnchorLayout às importações se não tiver
+from kivy.uix.anchorlayout import AnchorLayout
+
+# No ReaderScreen, altere o build_ui para incluir a coluna centralizada:
+def build_ui(self):
+        self.main_layout = MDBoxLayout(orientation='vertical', md_bg_color=self.bg_deep)
+        
+        # ... (seu código da toolbar e progress bar continua igual)
+
+        # MUDANÇA AQUI: Criamos um container que centraliza o texto
+        reader_anchor = AnchorLayout(anchor_x='center')
+        
+        # Coluna com largura máxima (ex: 800dp)
+        self.reading_column = MDBoxLayout(orientation='vertical', size_hint_x=None, width="800dp")
+        # Ajuste dinâmico: se a janela for menor que 800, a coluna segue a janela
+        self.bind(width=lambda inst, val: setattr(self.reading_column, 'width', min(val, dp(850))))
+
+        self.scroll = MDScrollView(scroll_type=['bars', 'content'], smooth_scroll_end=10)
+        # BIND para salvar a posição do scroll automaticamente
+        self.scroll.bind(scroll_y=self._on_scroll_change)
+
+        self.text_label = MDLabel(
+            text="", padding=(40, 60), size_hint_y=None, 
+            theme_text_color="Custom", text_color=(0.9, 0.9, 0.9, 1), 
+            font_size=f"{self.font_size_sp}sp", line_height=1.7
+        )
+        self.text_label.bind(texture_size=self._update_text_height)
+        
+        self.scroll.add_widget(self.text_label)
+        self.reading_column.add_widget(self.scroll)
+        reader_anchor.add_widget(self.reading_column)
+        
+        # Camada de toque por cima para o menu
+        self.main_layout.add_widget(reader_anchor)
+        # ... resto do código (nav_overlay, etc)
+
+def _on_scroll_change(self, instance, value):
+        # Salva a posição no DB a cada movimento (com atraso para não pesar)
+        Clock.unschedule(self._save_scroll_to_db)
+        Clock.schedule_once(lambda dt: self._save_scroll_to_db(value), 1.0)
+
+def _save_scroll_to_db(self, value):
+        if self.current_novel:
+            # Você precisará criar esse método na Engine/DB
+            self.view.engine.db.update_scroll_pos(self.current_novel, value)

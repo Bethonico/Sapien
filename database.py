@@ -98,3 +98,13 @@ class SapienDB:
         cursor.execute("UPDATE novels SET last_chapter_idx = ? WHERE name = ?", (chapter_idx, novel_name))
         conn.commit()
         conn.close()
+# No método que cria a tabela 'novels', certifique-se de ter:
+# scroll_pos REAL DEFAULT 1.0
+
+def update_scroll_pos(self, novel_name, scroll_y):
+    query = "UPDATE novels SET scroll_pos = ? WHERE name = ?"
+    self.execute_query(query, (scroll_y, novel_name))
+
+def get_novel_data(self, novel_name):
+    # Retorna o dicionário completo da novel (incluindo scroll_pos)
+    return self.fetch_one("SELECT * FROM novels WHERE name = ?", (novel_name,))

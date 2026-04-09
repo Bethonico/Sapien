@@ -84,3 +84,30 @@ class SapienEngine:
 
     def update_reading_progress(self, novel_name, idx):
         self.db.update_progress(novel_name, idx)
+def _parse_and_save_epub(self, name, filepath):
+        try:
+            book = epub.read_epub(filepath)
+            cover_path = "assets/covers/default_cover.png" # Tenha uma imagem padrão
+            
+            # 1. Tenta a capa oficial
+            covers = list(book.get_items_of_type(ebooklib.ITEM_COVER))
+            if covers:
+                cover_path = os.path.join(self.covers_path, f"{name}_cover.jpg")
+                with open(cover_path, "wb") as f:
+                    f.write(covers[0].get_content())
+            else:
+                # 2. Fallback: Tenta pegar a primeira imagem que encontrar no livro
+                images = list(book.get_items_of_type(ebooklib.ITEM_IMAGE))
+                if images:
+                    cover_path = os.path.join(self.covers_path, f"{name}_cover.jpg")
+                    with open(cover_path, "wb") as f:
+                        f.write(images[0].get_content())
+
+            # ... (seu código de extração de capítulos)
+            
+            # Adicione um print para debugar no VS Code
+            print(f"✅ {name} importado com {len(chapters_data)} capítulos.")
+            self.db.add_novel(name, cover_path, chapters_data)
+            
+        except Exception as e:
+            print(f"❌ Erro em {name}: {e}")
