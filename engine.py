@@ -1,97 +1,86 @@
 import os
-import json
-import threading # NOVA IMPORTAÇÃO
+import threading
 import ebooklib
 from ebooklib import epub
 from bs4 import BeautifulSoup
+from database import SapienDB
 
 class SapienEngine:
     def __init__(self):
         self.base_path = os.path.dirname(os.path.abspath(__file__))
-        self.assets_path = os.path.join(self.base_path, "assets")
-        self.config_path = os.path.join(self.assets_path, "config.json")
+        self.import_path = os.path.join(self.base_path, "import_zone")
+        self.covers_path = os.path.join(self.base_path, "assets", "covers")
         
-        self.library = {} 
-        self.current_novel_data = None
-        self.chapters = []
+        # Garante que as pastas existam
+        os.makedirs(self.import_path, exist_ok=True)
+        os.makedirs(self.covers_path, exist_ok=True)
         
-        self.scan_library()
+        self.db = SapienDB()
 
-    def scan_library(self):
-        if not os.path.exists(self.assets_path):
-            os.makedirs(self.assets_path)
-            return
+    def check_new_imports(self, on_progress=None, on_complete=None):
+        """Roda em segundo plano para achar novos EPUBs na import_zone"""
+        def _process():
+            epubs = [f for f in os.listdir(self.import_path) if f.endswith('.epub')]
+            if not epubs:
+                if on_complete: on_complete(False)
+                return
 
-        for folder in os.listdir(self.assets_path):
-            folder_path = os.path.join(self.assets_path, folder)
-            if os.path.isdir(folder_path):
-                epubs = [f for f in os.listdir(folder_path) if f.endswith('.epub')]
-                if epubs:
-                    cover = os.path.join(folder_path, "cover.jpg")
-                    if not os.path.exists(cover):
-                        cover = "https://m.media-amazon.com/images/M/MV5BMWE1ZWYwZGUtZjRmOS00NzUzLTlkZmUtMTEwMjNhNTVmNDIwXkEyXkFqcGc@._V1_.jpg"
-                    
-                    self.library[folder] = {
-                        "path": os.path.join(folder_path, epubs[0]),
-                        "cover": cover,
-                        "name": folder
-                    }
+            for filename in epubs:
+                novel_name = filename.replace('.epub', '')
+                if not self.db.novel_exists(novel_name):
+                    if on_progress: on_progress(f"Processando {novel_name}...")
+                    filepath = os.path.join(self.import_path, filename)
+                    self._parse_and_save_epub(novel_name, filepath)
+                    # Opcional: mover ou deletar o arquivo após importar
+                    # os.remove(filepath) 
+            
+            if on_complete: on_complete(True)
+            
+        threading.Thread(target=_process, daemon=True).start()
 
-    # CARREGAMENTO ASSÍNCRONO: Agora aceita um "callback" (uma função para chamar quando terminar)
-    def load_novel_async(self, novel_name, on_complete):
-        def _load_process():
-            if novel_name in self.library:
-                self.current_novel_data = self.library[novel_name]
-                self.chapters = []
-                try:
-                    book = epub.read_epub(self.current_novel_data["path"])
-                    items = list(book.get_items_of_type(ebooklib.ITEM_DOCUMENT))
-                    
-                    for item in items:
-                        try:
-                            content = item.get_content()
-                            soup = BeautifulSoup(content, 'html.parser')
-                            text_content = soup.get_text(strip=True)
-                            if len(text_content) > 200: 
-                                title_tag = soup.find(['h1', 'h2', 'h3'])
-                                title = title_tag.get_text().strip() if title_tag else f"Capítulo {len(self.chapters) + 1}"
-                                self.chapters.append({"title": title, "item": item})
-                        except: continue
-                    on_complete(True) # Avisa a View que terminou
-                except Exception as e:
-                    print(f"Erro ao ler EPUB: {e}")
-                    on_complete(False)
-            else:
-                on_complete(False)
-        
-        # Inicia o processo em segundo plano para não travar a tela
-        threading.Thread(target=_load_process, daemon=True).start()
+    def _parse_and_save_epub(self, name, filepath):
+        try:
+            book = epub.read_epub(filepath)
+            
+            # Tenta pegar uma capa (fallback para imagem da web)
+            cover_path = "https://m.media-amazon.com/images/M/MV5BMWE1ZWYwZGUtZjRmOS00NzUzLTlkZmUtMTEwMjNhNTVmNDIwXkEyXkFqcGc@._V1_.jpg"
+            for item in book.get_items_of_type(ebooklib.ITEM_COVER):
+                local_cover = os.path.join(self.covers_path, f"{name}_cover.jpg")
+                with open(local_cover, "wb") as f:
+                    f.write(item.get_content())
+                cover_path = local_cover
+                break
 
-    def get_content(self, index):
-        if 0 <= index < len(self.chapters):
-            content = self.chapters[index]["item"].get_content()
-            return BeautifulSoup(content, 'html.parser').get_text(separator='\n').strip()
-        return "Conteúdo indisponível."
+            # Extrai os capítulos
+            chapters_data = []
+            items = list(book.get_items_of_type(ebooklib.ITEM_DOCUMENT))
+            idx = 0
+            
+            for item in items:
+                content = item.get_content()
+                soup = BeautifulSoup(content, 'html.parser')
+                text_content = soup.get_text(separator='\n\n', strip=True)
+                
+                # Só salva se tiver texto real (ignora páginas de créditos, etc)
+                if len(text_content) > 300:
+                    title_tag = soup.find(['h1', 'h2', 'h3'])
+                    title = title_tag.get_text().strip() if title_tag else f"Capítulo {idx + 1}"
+                    chapters_data.append({"idx": idx, "title": title, "content": text_content})
+                    idx += 1
+            
+            self.db.add_novel(name, cover_path, chapters_data)
+        except Exception as e:
+            print(f"Erro ao fazer o parse de {name}: {e}")
 
-    def save_progress(self, novel_name, index):
-        config = self.load_full_config()
-        if index < len(self.chapters):
-            config[novel_name] = {
-                "last_chapter": index,
-                "title": self.chapters[index]["title"]
-            }
-            config["last_read"] = novel_name
-            with open(self.config_path, "w") as f:
-                json.dump(config, f)
+    # --- Métodos de Consumo da View (Acesso Rápido) ---
+    def get_library(self):
+        return self.db.get_all_novels()
 
-    def load_full_config(self):
-        if os.path.exists(self.config_path):
-            try:
-                with open(self.config_path, "r") as f:
-                    return json.load(f)
-            except: return {}
-        return {}
+    def get_chapters_list(self, novel_name):
+        return self.db.get_novel_chapters(novel_name)
 
-    def get_filtered_chapters(self, query=""):
-        query = query.lower()
-        return [(i, c["title"]) for i, c in enumerate(self.chapters) if query in c["title"].lower()]
+    def get_chapter(self, novel_name, idx):
+        return self.db.get_chapter_content(novel_name, idx)
+
+    def update_reading_progress(self, novel_name, idx):
+        self.db.update_progress(novel_name, idx)
