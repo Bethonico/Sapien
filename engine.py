@@ -111,3 +111,64 @@ def _parse_and_save_epub(self, name, filepath):
             
         except Exception as e:
             print(f"❌ Erro em {name}: {e}")
+
+#FUNCAO DE AUDIO
+import os
+import threading
+from database import SapienDB
+from audio_manager import SapienAudio
+
+class SapienEngine:
+    def __init__(self):
+        self.base_path = os.path.dirname(os.path.abspath(__file__))
+        self.import_path = os.path.join(self.base_path, "import_zone")
+        self.covers_path = os.path.join(self.base_path, "assets", "covers")
+        
+        # Garante as pastas base
+        os.makedirs(self.import_path, exist_ok=True)
+        os.makedirs(self.covers_path, exist_ok=True)
+        
+        # Inicializa os módulos
+        self.db = SapienDB()
+        self.audio = SapienAudio() # Nosso novo gerenciador de gTTS
+
+    # --- MÉTODOS DE ÁUDIO (PONTES PARA A VIEW) ---
+
+    def play_chapter_audio(self, novel_name, chapter_idx, text, on_start, on_complete):
+        """
+        Solicita ao audio_manager o download (se necessário) e a reprodução.
+        on_start: função para mostrar loading na interface.
+        on_complete: função para mudar o ícone para 'stop' quando o áudio começar.
+        """
+        # Chamamos o método do audio_manager.py
+        self.audio.download_audio(
+            text=text,
+            novel_name=novel_name,
+            cap_idx=chapter_idx,
+            on_start=on_start,
+            on_complete=lambda path: self._start_playback(path, on_complete)
+        )
+
+    def _start_playback(self, path, on_complete):
+        """Método interno para iniciar o som e avisar a View"""
+        self.audio.play_audio(path)
+        on_complete()
+
+    def stop_audio(self):
+        """Para qualquer áudio em execução"""
+        self.audio.stop_audio()
+
+    # --- MÉTODOS DE BIBLIOTECA (REVISADOS) ---
+
+    def get_library(self):
+        return self.db.get_all_novels()
+
+    def get_chapters_list(self, novel_name):
+        return self.db.get_novel_chapters(novel_name)
+
+    def get_chapter(self, novel_name, idx):
+        return self.db.get_chapter_content(novel_name, idx)
+
+    def update_reading_progress(self, novel_name, idx):
+        # Agora o DB aceita o scroll_pos opcional, aqui enviamos o cap atual
+        self.db.update_progress(novel_name, idx)

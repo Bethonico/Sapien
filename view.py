@@ -16,6 +16,7 @@ from kivy.uix.image import AsyncImage
 from kivy.uix.anchorlayout import AnchorLayout
 from kivy.clock import Clock, mainthread
 from kivy.animation import Animation
+from kivy.metrics import dp
 
 class SapienView(MDScreenManager):
     def __init__(self, engine, **kwargs):
@@ -117,6 +118,7 @@ class NetflixHome(MDScreen):
         reader.init_novel(novel_name, last_chapter_idx)
         self.view.current = "reader"
 
+
 class ReaderScreen(MDScreen):
     def __init__(self, view, **kwargs):
         super().__init__(**kwargs)
@@ -134,13 +136,14 @@ class ReaderScreen(MDScreen):
         self.build_ui()
 
     def build_ui(self):
-        # Usamos MDBoxLayout para poder trocar a cor do fundo dinamicamente
         self.main_layout = MDBoxLayout(orientation='vertical', md_bg_color=self.bg_deep)
         
         self.toolbar = MDTopAppBar(
             title="Leitor", md_bg_color=self.purple_ui, elevation=0,
             left_action_items=[["menu", lambda x: self.nav_drawer.set_state("open")]],
+            # ATUALIZAÇÃO AQUI: Botão com toggle_audio integrado
             right_action_items=[
+                ["headphones", lambda x: self.toggle_audio()],
                 ["cog", lambda x: self.open_settings()],
                 ["home", lambda x: self.go_home()]
             ]
@@ -150,10 +153,15 @@ class ReaderScreen(MDScreen):
         self.progress_bar = MDProgressBar(value=0, color=(0.6, 0.4, 1, 1), size_hint_y=None, height="4dp")
         self.main_layout.add_widget(self.progress_bar)
 
-        reader_container = AnchorLayout()
+        # MUDANÇA INCORPORADA: Layout centralizado
+        reader_anchor = AnchorLayout(anchor_x='center')
         
-        # Ativando suporte a scroll por mouse/barra
+        self.reading_column = MDBoxLayout(orientation='vertical', size_hint_x=None, width="800dp")
+        self.bind(width=lambda inst, val: setattr(self.reading_column, 'width', min(val, dp(850))))
+
         self.scroll = MDScrollView(scroll_type=['bars', 'content'], smooth_scroll_end=10)
+        self.scroll.bind(scroll_y=self._on_scroll_change)
+
         self.text_label = MDLabel(
             text="", padding=(40, 60), size_hint_y=None, 
             theme_text_color="Custom", text_color=(0.9, 0.9, 0.9, 1), 
@@ -162,11 +170,15 @@ class ReaderScreen(MDScreen):
         self.text_label.bind(texture_size=self._update_text_height)
         
         self.scroll.add_widget(self.text_label)
-        
+        self.reading_column.add_widget(self.scroll)
+        reader_anchor.add_widget(self.reading_column)
+
         self.touch_layer = MDFlatButton(size_hint=(1, 1), on_release=lambda x: self.toggle_ui())
         
-        reader_container.add_widget(self.scroll)
-        reader_container.add_widget(self.touch_layer)
+        # Juntando o container
+        container = AnchorLayout()
+        container.add_widget(reader_anchor)
+        container.add_widget(self.touch_layer)
         
         # Botões laterais
         nav_overlay = MDBoxLayout(orientation='horizontal', padding="10dp", size_hint=(1, None), height="80dp")
@@ -179,8 +191,8 @@ class ReaderScreen(MDScreen):
         nav_overlay.add_widget(MDBoxLayout()) 
         nav_overlay.add_widget(self.next_btn)
         
-        reader_container.add_widget(nav_overlay)
-        self.main_layout.add_widget(reader_container)
+        container.add_widget(nav_overlay)
+        self.main_layout.add_widget(container)
         self.add_widget(self.main_layout)
 
         self.nav_drawer = MDNavigationDrawer(radius=(0, 16, 16, 0), md_bg_color=self.purple_ui)
@@ -203,6 +215,15 @@ class ReaderScreen(MDScreen):
         Animation(opacity=alpha, d=0.2).start(self.toolbar)
         Animation(opacity=alpha, d=0.2).start(self.progress_bar)
         self.ui_visible = not self.ui_visible
+
+    # SISTEMA DE SCROLL INCORPORADO DA SUA VERSÃO
+    def _on_scroll_change(self, instance, value):
+        Clock.unschedule(self._save_scroll_to_db)
+        Clock.schedule_once(lambda dt: self._save_scroll_to_db(value), 1.0)
+
+    def _save_scroll_to_db(self, value):
+        if self.current_novel:
+            self.view.engine.db.update_scroll_pos(self.current_novel, value)
 
     def init_novel(self, novel_name, start_idx):
         self.current_novel = novel_name
@@ -249,7 +270,46 @@ class ReaderScreen(MDScreen):
         self.view.get_screen("home").load_sections()
         self.view.current = "home"
 
-    # --- SISTEMA DE CONFIGURAÇÕES REINTEGRADO ---
+    # --- NOVO SISTEMA DE AUDIO (TOGGLE_AUDIO) ---
+    def toggle_audio(self):
+        text = self.text_label.text
+        novel_name = self.current_novel
+        cap_idx = self.current_idx
+
+        def show_loading():
+            # Mostra o reloginho e mantém os outros botões
+            self.toolbar.right_action_items = [
+                ["clock-outline", lambda x: None],
+                ["cog", lambda x: self.open_settings()],
+                ["home", lambda x: self.go_home()]
+            ]
+
+        @mainthread
+        def play_now(path):
+            self.view.engine.audio.play_audio(path)
+            # Muda para o botão de STOP (chama parar_audio)
+            self.toolbar.right_action_items = [
+                ["stop-circle", lambda x: self.parar_audio()],
+                ["cog", lambda x: self.open_settings()],
+                ["home", lambda x: self.go_home()]
+            ]
+
+        self.view.engine.audio.download_audio(
+            text, novel_name, cap_idx, 
+            on_start=show_loading, 
+            on_complete=play_now
+        )
+
+    def parar_audio(self):
+        self.view.engine.audio.stop_audio()
+        # Restaura o botão de fones de ouvido original
+        self.toolbar.right_action_items = [
+            ["headphones", lambda x: self.toggle_audio()],
+            ["cog", lambda x: self.open_settings()],
+            ["home", lambda x: self.go_home()]
+        ]
+
+    # --- SISTEMA DE CONFIGURAÇÕES ---
     def open_settings(self):
         if not self.settings_dialog:
             content = MDBoxLayout(orientation="vertical", spacing="15dp", size_hint_y=None, height="160dp")
@@ -291,49 +351,3 @@ class ReaderScreen(MDScreen):
         
         if self.settings_dialog:
             self.settings_dialog.dismiss()
-
-# Adicione AnchorLayout às importações se não tiver
-from kivy.uix.anchorlayout import AnchorLayout
-
-# No ReaderScreen, altere o build_ui para incluir a coluna centralizada:
-def build_ui(self):
-        self.main_layout = MDBoxLayout(orientation='vertical', md_bg_color=self.bg_deep)
-        
-        # ... (seu código da toolbar e progress bar continua igual)
-
-        # MUDANÇA AQUI: Criamos um container que centraliza o texto
-        reader_anchor = AnchorLayout(anchor_x='center')
-        
-        # Coluna com largura máxima (ex: 800dp)
-        self.reading_column = MDBoxLayout(orientation='vertical', size_hint_x=None, width="800dp")
-        # Ajuste dinâmico: se a janela for menor que 800, a coluna segue a janela
-        self.bind(width=lambda inst, val: setattr(self.reading_column, 'width', min(val, dp(850))))
-
-        self.scroll = MDScrollView(scroll_type=['bars', 'content'], smooth_scroll_end=10)
-        # BIND para salvar a posição do scroll automaticamente
-        self.scroll.bind(scroll_y=self._on_scroll_change)
-
-        self.text_label = MDLabel(
-            text="", padding=(40, 60), size_hint_y=None, 
-            theme_text_color="Custom", text_color=(0.9, 0.9, 0.9, 1), 
-            font_size=f"{self.font_size_sp}sp", line_height=1.7
-        )
-        self.text_label.bind(texture_size=self._update_text_height)
-        
-        self.scroll.add_widget(self.text_label)
-        self.reading_column.add_widget(self.scroll)
-        reader_anchor.add_widget(self.reading_column)
-        
-        # Camada de toque por cima para o menu
-        self.main_layout.add_widget(reader_anchor)
-        # ... resto do código (nav_overlay, etc)
-
-def _on_scroll_change(self, instance, value):
-        # Salva a posição no DB a cada movimento (com atraso para não pesar)
-        Clock.unschedule(self._save_scroll_to_db)
-        Clock.schedule_once(lambda dt: self._save_scroll_to_db(value), 1.0)
-
-def _save_scroll_to_db(self, value):
-        if self.current_novel:
-            # Você precisará criar esse método na Engine/DB
-            self.view.engine.db.update_scroll_pos(self.current_novel, value)
