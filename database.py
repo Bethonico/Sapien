@@ -11,6 +11,7 @@ class SapienDB:
             os.makedirs(self.assets_path)
             
         self._create_tables()
+        self._migrate_tables()  # Garante colunas novas em DBs antigos
 
     def _get_connection(self):
         return sqlite3.connect(self.db_path)
@@ -22,7 +23,8 @@ class SapienDB:
                             id INTEGER PRIMARY KEY AUTOINCREMENT,
                             name TEXT UNIQUE,
                             cover_path TEXT,
-                            last_chapter_idx INTEGER DEFAULT 0)''')
+                            last_chapter_idx INTEGER DEFAULT 0,
+                            scroll_pos REAL DEFAULT 1.0)''')
         
         cursor.execute('''CREATE TABLE IF NOT EXISTS chapters (
                             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -33,6 +35,18 @@ class SapienDB:
                             FOREIGN KEY(novel_id) REFERENCES novels(id))''')
         conn.commit()
         conn.close()
+
+    def _migrate_tables(self):
+        """Adiciona colunas novas em bancos de dados já existentes sem quebrar nada."""
+        conn = self._get_connection()
+        cursor = conn.cursor()
+        try:
+            cursor.execute("ALTER TABLE novels ADD COLUMN scroll_pos REAL DEFAULT 1.0")
+            conn.commit()
+        except sqlite3.OperationalError:
+            pass  # Coluna já existe — sem problema
+        finally:
+            conn.close()
 
     def novel_exists(self, name):
         conn = self._get_connection()
@@ -46,14 +60,14 @@ class SapienDB:
         conn = self._get_connection()
         cursor = conn.cursor()
         try:
-            # Insere o livro
             cursor.execute("INSERT OR IGNORE INTO novels (name, cover_path) VALUES (?, ?)", (name, cover_path))
             novel_id = cursor.execute("SELECT id FROM novels WHERE name = ?", (name,)).fetchone()[0]
             
-            # Insere os capítulos
             for cap in chapters_data:
-                cursor.execute("INSERT INTO chapters (novel_id, title, content, chapter_idx) VALUES (?, ?, ?, ?)",
-                               (novel_id, cap['title'], cap['content'], cap['idx']))
+                cursor.execute(
+                    "INSERT INTO chapters (novel_id, title, content, chapter_idx) VALUES (?, ?, ?, ?)",
+                    (novel_id, cap['title'], cap['content'], cap['idx'])
+                )
             conn.commit()
             return True
         except Exception as e:
@@ -85,7 +99,8 @@ class SapienDB:
         cursor = conn.cursor()
         cursor.execute('''SELECT chapters.title, chapters.content 
                           FROM chapters JOIN novels ON chapters.novel_id = novels.id 
-                          WHERE novels.name = ? AND chapters.chapter_idx = ?''', (novel_name, chapter_idx))
+                          WHERE novels.name = ? AND chapters.chapter_idx = ?''',
+                       (novel_name, chapter_idx))
         result = cursor.fetchone()
         conn.close()
         if result:
@@ -95,16 +110,31 @@ class SapienDB:
     def update_progress(self, novel_name, chapter_idx):
         conn = self._get_connection()
         cursor = conn.cursor()
-        cursor.execute("UPDATE novels SET last_chapter_idx = ? WHERE name = ?", (chapter_idx, novel_name))
+        cursor.execute(
+            "UPDATE novels SET last_chapter_idx = ? WHERE name = ?",
+            (chapter_idx, novel_name)
+        )
         conn.commit()
         conn.close()
-# No método que cria a tabela 'novels', certifique-se de ter:
-# scroll_pos REAL DEFAULT 1.0
 
-def update_scroll_pos(self, novel_name, scroll_y):
-    query = "UPDATE novels SET scroll_pos = ? WHERE name = ?"
-    self.execute_query(query, (scroll_y, novel_name))
+    def update_scroll_pos(self, novel_name, scroll_y):
+        conn = self._get_connection()
+        cursor = conn.cursor()
+        cursor.execute(
+            "UPDATE novels SET scroll_pos = ? WHERE name = ?",
+            (scroll_y, novel_name)
+        )
+        conn.commit()
+        conn.close()
 
-def get_novel_data(self, novel_name):
-    # Retorna o dicionário completo da novel (incluindo scroll_pos)
-    return self.fetch_one("SELECT * FROM novels WHERE name = ?", (novel_name,))
+    def get_novel_data(self, novel_name):
+        """Retorna o dicionário completo da novel (incluindo scroll_pos)."""
+        conn = self._get_connection()
+        cursor = conn.cursor()
+        cursor.execute("SELECT * FROM novels WHERE name = ?", (novel_name,))
+        row = cursor.fetchone()
+        conn.close()
+        if not row:
+            return None
+        columns = ["id", "name", "cover_path", "last_chapter_idx", "scroll_pos"]
+        return dict(zip(columns, row))

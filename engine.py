@@ -4,6 +4,7 @@ import ebooklib
 from ebooklib import epub
 from bs4 import BeautifulSoup
 from database import SapienDB
+from audio_manager import SapienAudio  # Importando o novo gerenciador
 
 class SapienEngine:
     def __init__(self):
@@ -11,11 +12,13 @@ class SapienEngine:
         self.import_path = os.path.join(self.base_path, "import_zone")
         self.covers_path = os.path.join(self.base_path, "assets", "covers")
         
-        # Garante que as pastas existam
+        # Garante as pastas base
         os.makedirs(self.import_path, exist_ok=True)
         os.makedirs(self.covers_path, exist_ok=True)
         
+        # Inicializa os módulos
         self.db = SapienDB()
+        self.audio = SapienAudio() # Agora o audio_manager gerencia os blocos
 
     def check_new_imports(self, on_progress=None, on_complete=None):
         """Roda em segundo plano para achar novos EPUBs na import_zone"""
@@ -31,8 +34,6 @@ class SapienEngine:
                     if on_progress: on_progress(f"Processando {novel_name}...")
                     filepath = os.path.join(self.import_path, filename)
                     self._parse_and_save_epub(novel_name, filepath)
-                    # Opcional: mover ou deletar o arquivo após importar
-                    # os.remove(filepath) 
             
             if on_complete: on_complete(True)
             
@@ -41,53 +42,7 @@ class SapienEngine:
     def _parse_and_save_epub(self, name, filepath):
         try:
             book = epub.read_epub(filepath)
-            
-            # Tenta pegar uma capa (fallback para imagem da web)
-            cover_path = "https://m.media-amazon.com/images/M/MV5BMWE1ZWYwZGUtZjRmOS00NzUzLTlkZmUtMTEwMjNhNTVmNDIwXkEyXkFqcGc@._V1_.jpg"
-            for item in book.get_items_of_type(ebooklib.ITEM_COVER):
-                local_cover = os.path.join(self.covers_path, f"{name}_cover.jpg")
-                with open(local_cover, "wb") as f:
-                    f.write(item.get_content())
-                cover_path = local_cover
-                break
-
-            # Extrai os capítulos
-            chapters_data = []
-            items = list(book.get_items_of_type(ebooklib.ITEM_DOCUMENT))
-            idx = 0
-            
-            for item in items:
-                content = item.get_content()
-                soup = BeautifulSoup(content, 'html.parser')
-                text_content = soup.get_text(separator='\n\n', strip=True)
-                
-                # Só salva se tiver texto real (ignora páginas de créditos, etc)
-                if len(text_content) > 300:
-                    title_tag = soup.find(['h1', 'h2', 'h3'])
-                    title = title_tag.get_text().strip() if title_tag else f"Capítulo {idx + 1}"
-                    chapters_data.append({"idx": idx, "title": title, "content": text_content})
-                    idx += 1
-            
-            self.db.add_novel(name, cover_path, chapters_data)
-        except Exception as e:
-            print(f"Erro ao fazer o parse de {name}: {e}")
-
-    # --- Métodos de Consumo da View (Acesso Rápido) ---
-    def get_library(self):
-        return self.db.get_all_novels()
-
-    def get_chapters_list(self, novel_name):
-        return self.db.get_novel_chapters(novel_name)
-
-    def get_chapter(self, novel_name, idx):
-        return self.db.get_chapter_content(novel_name, idx)
-
-    def update_reading_progress(self, novel_name, idx):
-        self.db.update_progress(novel_name, idx)
-def _parse_and_save_epub(self, name, filepath):
-        try:
-            book = epub.read_epub(filepath)
-            cover_path = "assets/covers/default_cover.png" # Tenha uma imagem padrão
+            cover_path = "assets/covers/default_cover.png" # Imagem padrão
             
             # 1. Tenta a capa oficial
             covers = list(book.get_items_of_type(ebooklib.ITEM_COVER))
@@ -103,63 +58,30 @@ def _parse_and_save_epub(self, name, filepath):
                     with open(cover_path, "wb") as f:
                         f.write(images[0].get_content())
 
-            # ... (seu código de extração de capítulos)
+            # Extrai os capítulos
+            chapters_data = []
+            items = list(book.get_items_of_type(ebooklib.ITEM_DOCUMENT))
+            idx = 0
             
-            # Adicione um print para debugar no VS Code
+            for item in items:
+                content = item.get_content()
+                soup = BeautifulSoup(content, 'html.parser')
+                text_content = soup.get_text(separator='\n\n', strip=True)
+                
+                # Só salva se tiver texto real
+                if len(text_content) > 300:
+                    title_tag = soup.find(['h1', 'h2', 'h3'])
+                    title = title_tag.get_text().strip() if title_tag else f"Capítulo {idx + 1}"
+                    chapters_data.append({"idx": idx, "title": title, "content": text_content})
+                    idx += 1
+            
             print(f"✅ {name} importado com {len(chapters_data)} capítulos.")
             self.db.add_novel(name, cover_path, chapters_data)
             
         except Exception as e:
             print(f"❌ Erro em {name}: {e}")
 
-#FUNCAO DE AUDIO
-import os
-import threading
-from database import SapienDB
-from audio_manager import SapienAudio
-
-class SapienEngine:
-    def __init__(self):
-        self.base_path = os.path.dirname(os.path.abspath(__file__))
-        self.import_path = os.path.join(self.base_path, "import_zone")
-        self.covers_path = os.path.join(self.base_path, "assets", "covers")
-        
-        # Garante as pastas base
-        os.makedirs(self.import_path, exist_ok=True)
-        os.makedirs(self.covers_path, exist_ok=True)
-        
-        # Inicializa os módulos
-        self.db = SapienDB()
-        self.audio = SapienAudio() # Nosso novo gerenciador de gTTS
-
-    # --- MÉTODOS DE ÁUDIO (PONTES PARA A VIEW) ---
-
-    def play_chapter_audio(self, novel_name, chapter_idx, text, on_start, on_complete):
-        """
-        Solicita ao audio_manager o download (se necessário) e a reprodução.
-        on_start: função para mostrar loading na interface.
-        on_complete: função para mudar o ícone para 'stop' quando o áudio começar.
-        """
-        # Chamamos o método do audio_manager.py
-        self.audio.download_audio(
-            text=text,
-            novel_name=novel_name,
-            cap_idx=chapter_idx,
-            on_start=on_start,
-            on_complete=lambda path: self._start_playback(path, on_complete)
-        )
-
-    def _start_playback(self, path, on_complete):
-        """Método interno para iniciar o som e avisar a View"""
-        self.audio.play_audio(path)
-        on_complete()
-
-    def stop_audio(self):
-        """Para qualquer áudio em execução"""
-        self.audio.stop_audio()
-
-    # --- MÉTODOS DE BIBLIOTECA (REVISADOS) ---
-
+    # --- Métodos de Biblioteca ---
     def get_library(self):
         return self.db.get_all_novels()
 
@@ -170,5 +92,4 @@ class SapienEngine:
         return self.db.get_chapter_content(novel_name, idx)
 
     def update_reading_progress(self, novel_name, idx):
-        # Agora o DB aceita o scroll_pos opcional, aqui enviamos o cap atual
         self.db.update_progress(novel_name, idx)
