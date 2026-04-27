@@ -1,0 +1,163 @@
+{% extends "base.html" %}
+{% block title %}Sapien — Biblioteca{% endblock %}
+
+{% block body %}
+<!-- Partículas de fundo -->
+<div class="bg-particles" aria-hidden="true">
+  <span></span><span></span><span></span><span></span><span></span>
+</div>
+
+<!-- ══ HEADER ══════════════════════════════════════════════════════ -->
+<header class="site-header">
+  <div class="header-inner">
+    <a href="/" class="logo">SAPIEN</a>
+    <div class="header-actions">
+      <button class="btn-icon" id="btn-import" title="Importar novos EPUBs">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+      </button>
+      <div class="avatar">S</div>
+    </div>
+  </div>
+  <div id="import-toast" class="import-toast hidden">
+    <span id="import-msg">Verificando novos EPUBs…</span>
+  </div>
+</header>
+
+<!-- ══ HERO: CONTINUAR LENDO ════════════════════════════════════════ -->
+{% if novels %}
+{% set hero = novels[0] %}
+<section class="hero-section">
+  <div class="hero-glow" aria-hidden="true"></div>
+  <div class="hero-card">
+    <div class="hero-cover-wrap">
+      <img
+        src="/cover/{{ hero.cover_path }}"
+        alt="Capa de {{ hero.name }}"
+        class="hero-cover"
+        onerror="this.src='/static/img/default_cover.png'"
+      />
+      <div class="hero-cover-shine" aria-hidden="true"></div>
+    </div>
+    <div class="hero-info">
+      <span class="hero-badge">Continuar Lendo</span>
+      <h1 class="hero-title">{{ hero.name }}</h1>
+      <p class="hero-meta">
+        Capítulo {{ hero.last_chapter + 1 }}
+        <span class="dot">·</span>
+        {{ hero.total_chapters }} capítulos
+      </p>
+      <div class="hero-progress-wrap">
+        <div class="hero-progress-bar">
+          <div class="hero-progress-fill" style="width: {{ ((hero.last_chapter / hero.total_chapters) * 100) | round(1) if hero.total_chapters > 0 else 0 }}%"></div>
+        </div>
+        <span class="hero-progress-pct">{{ ((hero.last_chapter / hero.total_chapters) * 100) | round(0) | int if hero.total_chapters > 0 else 0 }}%</span>
+      </div>
+      <a href="/reader/{{ hero.name }}/{{ hero.last_chapter }}" class="btn-play">
+        <svg viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+        Continuar Leitura
+      </a>
+    </div>
+  </div>
+</section>
+{% endif %}
+
+<!-- ══ ESTANTE ══════════════════════════════════════════════════════ -->
+<section class="shelf-section">
+  <div class="shelf-header">
+    <h2 class="shelf-title">Minha Estante</h2>
+    <span class="shelf-count">{{ novels | length }} obra{{ 's' if novels | length != 1 else '' }}</span>
+  </div>
+
+  {% if novels %}
+  <div class="carousel-wrapper">
+    <button class="carousel-arrow arrow-left" aria-label="Anterior">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="15 18 9 12 15 6"/></svg>
+    </button>
+    <div class="carousel" id="shelf-carousel">
+      {% for novel in novels %}
+      <a href="/reader/{{ novel.name }}/{{ novel.last_chapter }}" class="novel-card" style="animation-delay: {{ loop.index0 * 0.07 }}s">
+        <div class="novel-poster-wrap">
+          <img
+            src="/cover/{{ novel.cover_path }}"
+            alt="{{ novel.name }}"
+            class="novel-poster"
+            onerror="this.src='/static/img/default_cover.png'"
+            loading="lazy"
+          />
+          <div class="novel-poster-overlay">
+            <div class="novel-play-icon">
+              <svg viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+            </div>
+            <div class="novel-overlay-info">
+              <span class="novel-chapter-badge">Cap. {{ novel.last_chapter + 1 }}</span>
+            </div>
+          </div>
+          {% if novel.last_chapter > 0 %}
+          <div class="novel-progress-strip">
+            <div class="novel-progress-fill" style="width: {{ ((novel.last_chapter / novel.total_chapters) * 100) | round(1) if novel.total_chapters > 0 else 0 }}%"></div>
+          </div>
+          {% endif %}
+        </div>
+        <div class="novel-meta">
+          <p class="novel-name">{{ novel.name }}</p>
+          <p class="novel-chapters-count">{{ novel.total_chapters }} capítulos</p>
+        </div>
+      </a>
+      {% endfor %}
+    </div>
+    <button class="carousel-arrow arrow-right" aria-label="Próximo">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="9 18 15 12 9 6"/></svg>
+    </button>
+  </div>
+  {% else %}
+  <div class="empty-state">
+    <div class="empty-icon">📚</div>
+    <h3>Sua estante está vazia</h3>
+    <p>Coloque arquivos <strong>.epub</strong> na pasta <code>import_zone</code> e clique no botão de importação.</p>
+    <button class="btn-play" onclick="triggerImport()">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+      Importar Agora
+    </button>
+  </div>
+  {% endif %}
+</section>
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+  // ── Import ────────────────────────────────────────────────────────
+  async function triggerImport() {
+    const toast = document.getElementById('import-toast');
+    const msg   = document.getElementById('import-msg');
+    toast.classList.remove('hidden');
+    msg.textContent = 'Verificando novos EPUBs…';
+
+    try {
+      const res  = await fetch('/api/import', { method: 'POST' });
+      const data = await res.json();
+      if (data.imported) {
+        msg.textContent = '✅ Novos livros encontrados! Recarregando…';
+        setTimeout(() => location.reload(), 1500);
+      } else {
+        msg.textContent = '📭 Nenhum EPUB novo encontrado.';
+        setTimeout(() => toast.classList.add('hidden'), 3000);
+      }
+    } catch {
+      msg.textContent = '❌ Erro ao importar.';
+      setTimeout(() => toast.classList.add('hidden'), 3000);
+    }
+  }
+
+  document.getElementById('btn-import')?.addEventListener('click', triggerImport);
+
+  // ── Carousel ──────────────────────────────────────────────────────
+  const carousel = document.getElementById('shelf-carousel');
+  document.querySelector('.arrow-left')?.addEventListener('click', () => {
+    carousel.scrollBy({ left: -320, behavior: 'smooth' });
+  });
+  document.querySelector('.arrow-right')?.addEventListener('click', () => {
+    carousel.scrollBy({ left: 320, behavior: 'smooth' });
+  });
+</script>
+{% endblock %}
